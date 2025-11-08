@@ -63,18 +63,28 @@ with st.container(border=True):
     st.subheader("輸入消費條件")
 
     # 搜尋輸入框（type-to-filter）
-    q = st.text_input("搜尋店家（輸入 A-Z 的任意字）", value="", placeholder="例如：A、B、C...")
-    LETTERS = [c for c in LETTERS]  # local copy for UI
+    q = st.text_input("搜尋店家（輸入 A-Z 的任意字）", value=st.session_state.get("q",""), placeholder="例如：A、B、C...")
+    st.session_state["q"] = q
+    LETTERS_local = [c for c in LETTERS]  # local copy for UI
     if q:
-        cand = [m for m in LETTERS if q.strip().upper() in m]
+        cand = [m for m in LETTERS_local if q.strip().upper() in m]
         if not cand:
             st.info("沒有找到符合的店家，已顯示全部店家。")
-            cand = LETTERS
+            cand = LETTERS_local
     else:
-        cand = LETTERS
+        cand = LETTERS_local
 
-    merchant = st.selectbox("選擇店家", cand, index=0, help="可打字縮小選項範圍；此 Demo 為 A–Z 虛擬店家")
-    amount = st.number_input("消費金額（NT$）", min_value=1.0, value=500.0, step=50.0)
+    # 記住上次選擇
+    default_idx = 0
+    last_m = st.session_state.get("merchant_last")
+    if last_m in cand:
+        default_idx = cand.index(last_m)
+
+    merchant = st.selectbox("選擇店家", cand, index=default_idx, help="可打字縮小選項範圍；此 Demo 為 A–Z 虛擬店家")
+    st.session_state["merchant_last"] = merchant
+
+    amount = st.number_input("消費金額（NT$）", min_value=1.0, value=float(st.session_state.get("amount_last", 500.0)), step=50.0)
+    st.session_state["amount_last"] = amount
 
     run = st.button("計算推薦", type="primary")
 
@@ -93,12 +103,7 @@ if run:
     with c1:
         st.markdown("想看詳細比較？")
     with c2:
-        go = st.button("前往：完整比較 ➜")
-        if go:
-            try:
-                st.switch_page("pages/01_完整比較.py")
-            except Exception:
-                st.markdown("[若無法自動跳轉，請點我前往完整比較頁](pages/01_完整比較.py)")
+        st.page_link("pages/01_compare.py", label="前往：完整比較 ➜", icon="📊")
 
 with st.expander("關於這個 Demo"):
     st.markdown("""
