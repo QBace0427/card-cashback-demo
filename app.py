@@ -15,7 +15,6 @@ class Card:
 
 LETTERS = list(string.ascii_uppercase)  # A-Z
 
-# Build virtual cashback rules
 def build_cards():
     base = 1.0
     cathay = {L: base for L in LETTERS}
@@ -62,50 +61,51 @@ st.caption("兩張卡（國泰卡 / 中信卡）＋ 26 個店家（A–Z）。�
 with st.container(border=True):
     st.subheader("輸入消費條件")
 
-    # 搜尋輸入框（type-to-filter）
-    q = st.text_input("搜尋店家（輸入 A-Z 的任意字）", value=st.session_state.get("q",""), placeholder="例如：A、B、C...")
-    st.session_state["q"] = q
-    LETTERS_local = [c for c in LETTERS]  # local copy for UI
-    if q:
-        cand = [m for m in LETTERS_local if q.strip().upper() in m]
-        if not cand:
-            st.info("沒有找到符合的店家，已顯示全部店家。")
+    with st.form("input_form", clear_on_submit=False):
+        q = st.text_input("搜尋店家（輸入 A-Z 的任意字）", value=st.session_state.get("q",""), placeholder="例如：A、B、C...")
+        st.session_state["q"] = q
+
+        LETTERS_local = [c for c in LETTERS]
+        if q:
+            cand = [m for m in LETTERS_local if q.strip().upper() in m]
+            if not cand:
+                st.info("沒有找到符合的店家，已顯示全部店家。")
+                cand = LETTERS_local
+        else:
             cand = LETTERS_local
-    else:
-        cand = LETTERS_local
 
-    # 記住上次選擇
-    default_idx = 0
-    last_m = st.session_state.get("merchant_last")
-    if last_m in cand:
-        default_idx = cand.index(last_m)
+        # 記住上次選擇
+        default_idx = 0
+        last_m = st.session_state.get("merchant_last")
+        if last_m in cand:
+            default_idx = cand.index(last_m)
 
-    merchant = st.selectbox("選擇店家", cand, index=default_idx, help="可打字縮小選項範圍；此 Demo 為 A–Z 虛擬店家")
-    st.session_state["merchant_last"] = merchant
+        merchant = st.selectbox("選擇店家", cand, index=default_idx, help="可打字縮小選項範圍；此 Demo 為 A–Z 虛擬店家")
+        amount = st.number_input("消費金額（NT$）", min_value=1.0, value=float(st.session_state.get("amount_last", 500.0)), step=50.0)
 
-    amount = st.number_input("消費金額（NT$）", min_value=1.0, value=float(st.session_state.get("amount_last", 500.0)), step=50.0)
-    st.session_state["amount_last"] = amount
+        submit = st.form_submit_button("計算推薦")
 
-    run = st.button("計算推薦", type="primary")
+    if submit:
+        st.session_state["merchant_last"] = merchant
+        st.session_state["amount_last"] = amount
+        results = recommend_card(merchant, amount)
+        st.session_state["results"] = results
+        st.session_state["amount"] = amount
+        st.session_state["merchant"] = merchant
 
-if run:
-    results = recommend_card(merchant, amount)
-    st.session_state["results"] = results
-    st.session_state["amount"] = amount
-    st.session_state["merchant"] = merchant
-
+# ---- Summary block (PERSISTS across reruns) ----
+if "results" in st.session_state:
+    results = st.session_state["results"]
     top = results[0]
     st.success(f"推薦卡片：**{top['卡片']}**，預估回饋 **NT${top['預估回饋(元)']}**（{top['回饋%']}%）", icon="✅")
     st.write(top["說明"])
 
     st.divider()
-    st.markdown("想看詳細比較？")
     if st.button("📊 前往：完整比較 ➜"):
-        # Robust navigation: use switch_page; if unavailable, show an instruction link
         try:
             st.switch_page("pages/01_compare.py")
         except Exception:
-            st.warning("若未自動跳轉，請在左側頁面選單點『01_compare』或使用多頁側邊欄。")
+            st.warning("若未自動跳轉，請在左側頁面選單點『01_compare』。")
 
 with st.expander("關於這個 Demo"):
     st.markdown("""
