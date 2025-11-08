@@ -99,11 +99,13 @@ if run:
     st.write(top["說明"])
 
     st.divider()
-    c1, c2 = st.columns([1,1])
-    with c1:
-        st.markdown("想看詳細比較？")
-    with c2:
-        st.page_link("pages/01_compare.py", label="前往：完整比較 ➜", icon="📊")
+    st.markdown("想看詳細比較？")
+    if st.button("📊 前往：完整比較 ➜"):
+        # Robust navigation: use switch_page; if unavailable, show an instruction link
+        try:
+            st.switch_page("pages/01_compare.py")
+        except Exception:
+            st.warning("若未自動跳轉，請在左側頁面選單點『01_compare』或使用多頁側邊欄。")
 
 with st.expander("關於這個 Demo"):
     st.markdown("""
