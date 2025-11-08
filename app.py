@@ -1,7 +1,8 @@
-
 import streamlit as st
 from dataclasses import dataclass
 from typing import Dict, List
+import pandas as pd
+import string
 
 st.set_page_config(page_title="刷卡回饋推薦（Demo）", page_icon="💳", layout="centered")
 
@@ -10,28 +11,32 @@ st.set_page_config(page_title="刷卡回饋推薦（Demo）", page_icon="💳", 
 class Card:
     id: str
     name: str
-    cashback_by_merchant: Dict[str, float]  # percent, e.g., 1.5 for 1.5%
+    cashback_by_merchant: Dict[str, float]  # percent
 
-CARDS: List[Card] = [
-    Card(id="cathay", name="國泰卡", cashback_by_merchant={
-        "A": 3.0,
-        "B": 2.5,
-        "C": 1.0,
-        "D": 0.5,
-        "E": 1.0,
-        "F": 1.0
-    }),
-    Card(id="ctbc", name="中信卡", cashback_by_merchant={
-        "A": 1.0,
-        "B": 1.2,
-        "C": 3.5,
-        "D": 2.8,
-        "E": 1.0,
-        "F": 1.5
-    }),
-]
+LETTERS = list(string.ascii_uppercase)  # A-Z
 
-MERCHANTS = ["A", "B", "C", "D", "E", "F"]
+# Build virtual cashback rules
+def build_cards():
+    base = 1.0
+    cathay = {L: base for L in LETTERS}
+    ctbc   = {L: base for L in LETTERS}
+
+    for L in ["A","B","E","F","M","N"]:
+        cathay[L] = 3.0; ctbc[L] = 1.2
+    for L in ["C","D","G","H","O","P"]:
+        ctbc[L] = 3.5; cathay[L] = 1.0
+    for L in ["Q","R","S"]:
+        cathay[L] = 2.2; ctbc[L] = 1.5
+    for L in ["T","U","V"]:
+        ctbc[L] = 2.4; cathay[L] = 1.6
+
+    cards = [
+        Card(id="cathay", name="國泰卡", cashback_by_merchant=cathay),
+        Card(id="ctbc", name="中信卡", cashback_by_merchant=ctbc),
+    ]
+    return cards
+
+CARDS: List[Card] = build_cards()
 
 def recommend_card(merchant: str, amount: float):
     merchant = merchant.strip().upper()
@@ -41,7 +46,6 @@ def recommend_card(merchant: str, amount: float):
         cashback = round(amount * pct / 100.0, 2)
         explanation = f"{card.name} 在店家 {merchant} 的回饋為 {pct}%，預估回饋 NT${cashback}"
         results.append({
-            "card_id": card.id,
             "卡片": card.name,
             "店家": merchant,
             "回饋%": pct,
@@ -53,40 +57,58 @@ def recommend_card(merchant: str, amount: float):
 
 # --------- UI ---------
 st.title("💳 刷卡回饋推薦（虛擬示範）")
-st.caption("兩張卡（國泰卡 / 中信卡）＋ 六個店家（A–F）的最小可行示範。")
+st.caption("兩張卡（國泰卡 / 中信卡）＋ 26 個店家（A–Z）。支援「打字搜尋」。")
 
 with st.container(border=True):
     st.subheader("輸入消費條件")
-    c1, c2 = st.columns(2)
-    with c1:
-        merchant = st.selectbox("選擇店家", MERCHANTS, index=0, help="此 Demo 僅提供 A–F 六個店家")
-    with c2:
-        amount = st.number_input("消費金額（NT$）", min_value=1.0, value=500.0, step=50.0)
+
+    # 搜尋輸入框（type-to-filter）
+    q = st.text_input("搜尋店家（輸入 A-Z 的任意字）", value="", placeholder="例如：A、B、C...")
+    LETTERS = [c for c in LETTERS]  # local copy for UI
+    if q:
+        cand = [m for m in LETTERS if q.strip().upper() in m]
+        if not cand:
+            st.info("沒有找到符合的店家，已顯示全部店家。")
+            cand = LETTERS
+    else:
+        cand = LETTERS
+
+    merchant = st.selectbox("選擇店家", cand, index=0, help="可打字縮小選項範圍；此 Demo 為 A–Z 虛擬店家")
+    amount = st.number_input("消費金額（NT$）", min_value=1.0, value=500.0, step=50.0)
 
     run = st.button("計算推薦", type="primary")
 
 if run:
     results = recommend_card(merchant, amount)
-    top = results[0]
+    st.session_state["results"] = results
+    st.session_state["amount"] = amount
+    st.session_state["merchant"] = merchant
 
+    top = results[0]
     st.success(f"推薦卡片：**{top['卡片']}**，預估回饋 **NT${top['預估回饋(元)']}**（{top['回饋%']}%）", icon="✅")
     st.write(top["說明"])
 
     st.divider()
-    st.subheader("完整比較")
-    import pandas as pd
-    df = pd.DataFrame(results)[["卡片", "店家", "回饋%", "預估回饋(元)", "說明"]]
-    st.dataframe(df, use_container_width=True)
+    c1, c2 = st.columns([1,1])
+    with c1:
+        st.markdown("想看詳細比較？")
+    with c2:
+        go = st.button("前往：完整比較 ➜")
+        if go:
+            try:
+                st.switch_page("pages/01_完整比較.py")
+            except Exception:
+                st.markdown("[若無法自動跳轉，請點我前往完整比較頁](pages/01_完整比較.py)")
 
 with st.expander("關於這個 Demo"):
     st.markdown("""
-- **卡片與回饋**為寫死的示範資料：
-  - 國泰卡：A=3.0%、B=2.5%、C=1.0%、D=0.5%、E=1.0%、F=1.0
-  - 中信卡：A=1.0%、B=1.2%、C=3.5%、D=2.8%、E=1.0%、F=1.5
+- **卡片與回饋**為示範資料（A–Z 虛擬店家）：
+  - 國泰卡：在 A、B、E、F、M、N 等店家較高回饋；Q、R、S 為 2.2%；其他 1.0%。
+  - 中信卡：在 C、D、G、H、O、P 等店家較高回饋；T、U、V 為 2.4%；其他 1.0%。
 - 演算法：將金額 × 回饋% 計算預估回饋並排序。
-- 你可以後續要求：
-  1) 新增可視化編輯卡片與回饋規則；
-  2) 支援上限、期間活動等進階條件；
-  3) 上傳 CSV/JSON 管理規則；
-  4) 部署為共用的 Web 服務。
+- 你可以再要求：
+  1) 可視化編輯卡片與回饋規則；
+  2) 上限、期間活動、指定支付方式等條件；
+  3) 匯入/匯出 JSON 或 CSV；
+  4) 美化 UI 與加入更多提示。
 """)
