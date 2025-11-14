@@ -161,12 +161,21 @@ def main():
         # 顯示最佳卡片
         best_row = results_df.iloc[0]
         st.subheader("🏆 最佳選擇")
-        st.markdown(
-            f"- **{best_row['顯示名稱']}** （{best_row['銀行']}）  
-             - 回饋：**{best_row['回饋%數']:.2f}%**  
-             - 預估可拿：**NT$ {best_row['預估回饋金額 (NT$)']:.0f}**  
-             - 套用規則：{best_row['套用規則']}"
-        )
+       best_name = best_row["顯示名稱"]
+best_bank = best_row["銀行"]
+best_rate = best_row["回饋%數"]
+best_reward = best_row["預估回饋金額 (NT$)"]
+best_rule = best_row["套用規則"]
+
+st.markdown(
+    f"""
+- **{best_name}**（{best_bank}）  
+- 回饋：**{best_rate:.2f}%**  
+- 預估可拿：**NT$ {best_reward:.0f}**  
+- 套用規則：{best_rule}
+"""
+)
+
 
         st.subheader("📊 詳細比較")
         st.dataframe(
