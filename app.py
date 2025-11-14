@@ -1,148 +1,182 @@
 import streamlit as st
-from dataclasses import dataclass
-from typing import Dict, List
-import string
 import pandas as pd
+from pathlib import Path
 
-st.set_page_config(page_title="刷卡回饋推薦（Demo）", page_icon="💳", layout="centered")
+# ---------- 資料讀取 ----------
 
-# --------- Domain Model ---------
-@dataclass
-class Card:
-    id: str
-    name: str
-    cashback_by_merchant: Dict[str, float]  # percent
+@st.cache_data
+def load_data():
+    # 如果你把 Excel 放在 data/ 底下，就改成：
+    # excel_path = Path("data/credit_card_rewards_example.xlsx")
+    excel_path = Path("credit_card_rewards_example.xlsx")
 
-LETTERS = list(string.ascii_uppercase)  # A-Z
+    xls = pd.ExcelFile(excel_path)
+    cards_df = pd.read_excel(xls, "cards")
+    rules_df = pd.read_excel(xls, "reward_rules")
 
-def build_cards():
-    base = 1.0
-    cathay = {L: base for L in LETTERS}
-    ctbc   = {L: base for L in LETTERS}
+    return cards_df, rules_df
 
-    for L in ["A","B","E","F","M","N"]:
-        cathay[L] = 3.0; ctbc[L] = 1.2
-    for L in ["C","D","G","H","O","P"]:
-        ctbc[L] = 3.5; cathay[L] = 1.0
-    for L in ["Q","R","S"]:
-        cathay[L] = 2.2; ctbc[L] = 1.5
-    for L in ["T","U","V"]:
-        ctbc[L] = 2.4; cathay[L] = 1.6
 
-    cards = [
-        Card(id="cathay", name="國泰卡", cashback_by_merchant=cathay),
-        Card(id="ctbc", name="中信卡", cashback_by_merchant=ctbc),
+def find_best_rate_for_card(card_row, rules_df, merchant_name,
+                            spend_channel="online", merchant_category="online_digital"):
+    """
+    給一張卡＋店家名稱，回傳：
+    - 使用的回饋% (float)
+    - 使用到的規則文字說明
+    """
+
+    card_id = card_row["card_id"]
+
+    # 篩出這張卡的所有規則
+    card_rules = rules_df[rules_df["card_id"] == card_id].copy()
+
+    # 1. 先找「符合特定店家/通路」的規則
+    #    條件：
+    #    - spend_channel 相同或為 all
+    #    - merchant_category 相同或為 all
+    #    - merchant_keywords 有包含該店家名稱（不分大小寫）
+    card_rules["merchant_keywords"] = card_rules["merchant_keywords"].fillna("")
+    special_rules = card_rules[
+        (card_rules["spend_channel"].isin([spend_channel, "all"])) &
+        (card_rules["merchant_category"].isin([merchant_category, "all"])) &
+        (card_rules["merchant_keywords"]
+         .str.contains(merchant_name, case=False, na=False))
     ]
-    return cards
 
-CARDS: List[Card] = build_cards()
+    # 如果有多條，使用 priority 最小的那一條（優先級最高）
+    if not special_rules.empty:
+        best_rule = special_rules.sort_values("priority").iloc[0]
+        rate = float(best_rule["rate_percent"])
+        desc = f"{best_rule['rule_name']}（{rate:.2f}%）"
+        return rate, desc
 
-def recommend_card(merchant: str, amount: float):
-    merchant = merchant.strip().upper()
-    results = []
-    for card in CARDS:
-        pct = card.cashback_by_merchant.get(merchant, 0.0)
-        cashback = round(amount * pct / 100.0, 2)
-        explanation = f"{card.name} 在店家 {merchant} 的回饋為 {pct}%，預估回饋 NT${cashback}"
-        results.append({
-            "卡片": card.name,
-            "店家": merchant,
-            "回饋%": pct,
-            "預估回饋(元)": cashback,
-            "說明": explanation
-        })
-    results_sorted = sorted(results, key=lambda x: (x["預估回饋(元)"], x["回饋%"]), reverse=True)
-    return results_sorted
+    # 2. 找不到特定規則，就 fallback 到一般消費
+    #    這裡可以用 priority 最大、或 rule_name 包含「一般消費」
+    general_rule = card_rules[card_rules["rule_name"].str.contains("一般消費", na=False)]
+    if not general_rule.empty:
+        general_rule = general_rule.sort_values("priority", ascending=False).iloc[0]
+        rate = float(general_rule["rate_percent"])
+        desc = f"{general_rule['rule_name']}（一般消費 {rate:.2f}%）"
+        return rate, desc
 
-# --------- View state ---------
-if "view" not in st.session_state:
-    st.session_state["view"] = "home"  # home or compare
+    # 3. 再不行，就用 cards 表裡的 general_rate_percent
+    if "general_rate_percent" in card_row:
+        rate = float(card_row["general_rate_percent"])
+        desc = f"一般消費（卡片基本回饋 {rate:.2f}%）"
+        return rate, desc
 
-def go_home():
-    st.session_state["view"] = "home"
+    # 4. 真的完全沒資料，就回 0
+    return 0.0, "未找到回饋規則"
 
-def go_compare():
-    st.session_state["view"] = "compare"
 
-# --------- HOME VIEW ---------
-if st.session_state["view"] == "home":
-    st.title("💳 刷卡回饋推薦（虛擬示範）")
-    st.caption("兩張卡（國泰卡 / 中信卡）＋ 26 個店家（A–Z）。支援「打字搜尋」。")
+# ---------- Streamlit 介面 ----------
 
-    with st.container(border=True):
-        st.subheader("輸入消費條件")
+def main():
+    st.set_page_config(page_title="信用卡回饋比較小工具", page_icon="💳")
+    st.title("💳 信用卡回饋比較：YouTube / Netflix / 蝦皮")
 
-        with st.form("input_form", clear_on_submit=False):
-            q = st.text_input("搜尋店家（輸入 A-Z 的任意字）", value=st.session_state.get("q",""), placeholder="例如：A、B、C...")
-            st.session_state["q"] = q
+    cards_df, rules_df = load_data()
 
-            LETTERS_local = [c for c in LETTERS]
-            if q:
-                cand = [m for m in LETTERS_local if q.strip().upper() in m]
-                if not cand:
-                    st.info("沒有找到符合的店家，已顯示全部店家。")
-                    cand = LETTERS_local
-            else:
-                cand = LETTERS_local
+    # 建一個 card_id → 顯示名稱 的 mapping，讓前端比較好看
+    card_display_map = {
+        "cathay_cube": "國泰 CUBE 卡",
+        "fubon_j": "富邦 J 卡",
+        "ctbc_linepay": "中信 LINE Pay 卡",
+    }
 
-            # 記住上次選擇
-            default_idx = 0
-            last_m = st.session_state.get("merchant_last")
-            if last_m in cand:
-                default_idx = cand.index(last_m)
+    # 從 cards_df 過濾出有在 mapping 裡的卡
+    cards_df = cards_df[cards_df["card_id"].isin(card_display_map.keys())].copy()
+    cards_df["display_name"] = cards_df["card_id"].map(card_display_map)
 
-            merchant = st.selectbox("選擇店家", cand, index=default_idx, help="可打字縮小選項範圍；此 Demo 為 A–Z 虛擬店家")
-            amount = st.number_input("消費金額（NT$）", min_value=1.0, value=float(st.session_state.get("amount_last", 500.0)), step=50.0)
+    # ---- 使用者選擇 ----
+    st.sidebar.header("設定條件")
 
-            submit = st.form_submit_button("計算推薦")
+    # 要比較的卡片（預設選全部三張）
+    card_choices = list(cards_df["display_name"])
+    selected_cards_display = st.sidebar.multiselect(
+        "選擇要比較的信用卡",
+        options=card_choices,
+        default=card_choices
+    )
 
-        if submit:
-            st.session_state["merchant_last"] = merchant
-            st.session_state["amount_last"] = amount
-            results = recommend_card(merchant, amount)
-            st.session_state["results"] = results
-            st.session_state["amount"] = amount
-            st.session_state["merchant"] = merchant
+    # 店家（先用你說的三個）
+    merchant_options = ["YouTube", "Netflix", "蝦皮購物"]
+    selected_merchant = st.sidebar.selectbox("選擇消費店家 / 類型", merchant_options)
 
-    if "results" in st.session_state:
-        results = st.session_state["results"]
-        top = results[0]
-        st.success(f"推薦卡片：**{top['卡片']}**，預估回饋 **NT${top['預估回饋(元)']}**（{top['回饋%']}%）", icon="✅")
-        st.write(top["說明"])
+    # 刷卡金額
+    amount = st.sidebar.number_input(
+        "刷卡金額 (NT$)",
+        min_value=0.0,
+        value=300.0,
+        step=100.0
+    )
 
-        st.divider()
-        if st.button("📊 前往：完整比較 ➜"):
-            go_compare()
+    st.write(f"目前設定：在 **{selected_merchant}** 刷卡 **NT$ {amount:.0f}**")
 
-    with st.expander("關於這個 Demo"):
-        st.markdown("""
-- **卡片與回饋**為示範資料（A–Z 虛擬店家）：
-  - 國泰卡：在 A、B、E、F、M、N 等店家較高回饋；Q、R、S 為 2.2%；其他 1.0%。
-  - 中信卡：在 C、D、G、H、O、P 等店家較高回饋；T、U、V 為 2.4%；其他 1.0%。
-- 演算法：將金額 × 回饋% 計算預估回饋並排序。
-- 你可以再要求：
-  1) 可視化編輯卡片與回饋規則；
-  2) 上限、期間活動、指定支付方式等條件；
-  3) 匯入/匯出 JSON 或 CSV；
-  4) 美化 UI 與加入更多提示。
-""")
+    if not selected_cards_display:
+        st.warning("請至少選擇一張信用卡來比較。")
+        return
 
-# --------- COMPARE VIEW ---------
-if st.session_state["view"] == "compare":
-    st.title("📊 完整比較")
-    if "results" not in st.session_state:
-        st.warning("尚未計算任何結果，請先回到首頁輸入條件。")
-        if st.button("⟵ 回首頁"):
-            go_home()
-        st.stop()
+    # 將 display_name 轉回 card_id
+    display_to_id = {v: k for k, v in card_display_map.items()}
+    selected_card_ids = [display_to_id[name] for name in selected_cards_display]
 
-    results = st.session_state["results"]
-    merchant = st.session_state.get("merchant", "?")
-    amount = st.session_state.get("amount", 0)
-    st.caption(f"條件：店家 {merchant}，消費金額 NT${amount:.0f}")
+    # ---- 計算回饋 ----
+    if st.button("計算回饋比較"):
+        results = []
 
-    df = pd.DataFrame(results)[["卡片", "店家", "回饋%", "預估回饋(元)", "說明"]]
-    st.dataframe(df, use_container_width=True)
+        for card_id in selected_card_ids:
+            card_row = cards_df[cards_df["card_id"] == card_id].iloc[0]
 
-    if st.button("⟵ 回首頁"):
-        go_home()
+            rate, rule_desc = find_best_rate_for_card(
+                card_row,
+                rules_df,
+                merchant_name=selected_merchant,
+                spend_channel="online",
+                merchant_category="online_digital",
+            )
+
+            reward_amount = amount * rate / 100.0
+
+            results.append({
+                "銀行": card_row["bank"],
+                "卡片": card_row["card_name"],
+                "顯示名稱": card_row["display_name"],
+                "回饋%數": rate,
+                "預估回饋金額 (NT$)": reward_amount,
+                "套用規則": rule_desc,
+            })
+
+        if not results:
+            st.warning("目前沒有找到任何回饋規則，請檢查資料。")
+            return
+
+        results_df = pd.DataFrame(results)
+        # 依照回饋金額排序
+        results_df = results_df.sort_values(
+            by="預估回饋金額 (NT$)",
+            ascending=False
+        ).reset_index(drop=True)
+
+        # 顯示最佳卡片
+        best_row = results_df.iloc[0]
+        st.subheader("🏆 最佳選擇")
+        st.markdown(
+            f"- **{best_row['顯示名稱']}** （{best_row['銀行']}）  
+             - 回饋：**{best_row['回饋%數']:.2f}%**  
+             - 預估可拿：**NT$ {best_row['預估回饋金額 (NT$)']:.0f}**  
+             - 套用規則：{best_row['套用規則']}"
+        )
+
+        st.subheader("📊 詳細比較")
+        st.dataframe(
+            results_df[["顯示名稱", "回饋%數", "預估回饋金額 (NT$)", "套用規則"]],
+            hide_index=True
+        )
+
+        with st.expander("查看原始計算資料"):
+            st.dataframe(results_df, hide_index=True)
+
+
+if __name__ == "__main__":
+    main()
